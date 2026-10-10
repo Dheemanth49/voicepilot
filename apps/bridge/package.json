@@ -1,0 +1,14 @@
+{
+  "name": "@voicepilot/bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test --test-concurrency=1 src/task-policy.test.ts src/windows-volume.test.ts src/pi-installation.test.ts src/pi-rpc.test.ts src/approvals.test.ts src/task-history.test.ts src/task-events.test.ts src/audio-transcription.test.ts src/shutdown.test.ts src/file-search-client.test.ts src/stt-client.test.ts src/runtime-status.test.ts ../../tools/pi/voicepilot-approval.test.mjs ../../tools/pi/voicepilot-computer-use.test.mjs ../../tools/pi/voicepilot-close-app.test.mjs ../../tools/pi/voicepilot-file-search.test.mjs",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {}
+}
+

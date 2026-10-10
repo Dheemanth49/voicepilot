@@ -1,0 +1,15 @@
+{
+  "name": "voicepilot-pi-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pi CLI runtime used by VoicePilot on Windows",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@amaster.ai/pi-computer-use": "0.1.24",
+    "pi-kilocode": "0.1.2"
+  }
+}
+

@@ -1,0 +1,8 @@
+# Windows x64 GPU speech runtime pins. CTranslate2 4.6.3 is built for CUDA 12.8;
+# faster-whisper 1.2.1 requires cuBLAS CUDA 12 and cuDNN 9.
+faster-whisper==1.2.1
+ctranslate2==4.6.3
+av<19
+nvidia-cublas-cu12==12.8.4.1
+nvidia-cudnn-cu12==9.8.0.87
+nvidia-cuda-runtime-cu12==12.8.90

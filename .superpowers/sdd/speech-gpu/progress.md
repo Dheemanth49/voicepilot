@@ -1,0 +1,12 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-10-11-speech-gpu.md
+
+Workspace ruling: `E:\centel` has no `.git` directory, so a Git worktree and task-start/commit script cannot be used. Execute in the approved workspace with task verification; leave hardware-dependent acceptance open unless performed on the RTX laptop.
+
+Pre-flight: depends on `FileSearchClient` runtime fields from file-search plan. Shared Node/React health fields will be assembled in `runtime-status.ts` after file-search client fields exist. Execute after file-search plan.
+
+- Task 1: complete — STT auto/cpu/cuda selection, startup CUDA→CPU fallback in auto mode, explicit-CUDA failure, device metadata, and DLL registration; 10 speech tests pass.
+- Task 2: implementation complete — isolated `.voicepilot-speech\\venv-gpu`, pinned Windows NVIDIA packages (CUDA 12.8, cuDNN 9.8.0.87, CTranslate2 4.6.3), model smoke before `.env` activation, and old-driver preservation integration test. PowerShell parse passes. Real package/model download remains unverified on target GPU laptop.
+- Task 3: complete — STT worker gets runtime paths via child-only PATH, active metadata clears on exit, and tests prove parent PATH is unchanged.
+- Task 4: complete — health contract/helper and setup-panel device label added; diagnostics report missing adapter/driver cleanly and include active bridge runtime when reachable. Local diagnostic executed; CIM access is restricted, `nvidia-smi` absent, bridge unavailable.
+- Task 5: automated validation complete — full tests pass (root 7, bridge 70, speech 10, file search 31) and production builds pass. CPU audio/device check and real RTX large-v3 transcription/latency benchmark remain manual acceptance gates.
+2026-10-11: Implemented STT auto/cpu/cuda selection, startup retry to CPU in auto mode, FP32-independent CTranslate2 reporting, Windows-only DLL registration, child-process-only PATH handling, health/UI device reporting, and `setup:speech:gpu`/`diagnose:gpu`. Speech test suite: 10 pass. Full `npm run test` passes (7 root, 70 bridge, 10 speech, 31 file-search); `npm run build` passes. Script parse passes. Read-only diagnostic executed: current environment has CPU-only PyTorch; CIM GPU query access denied; `nvidia-smi` absent; bridge unavailable. Target RTX setup/transcription acceptance remains a manual gate. CUDA 12.8 Windows NVIDIA pins: CTranslate2 4.6.3, cuBLAS 12.8.4.1, cuDNN 9.8.0.87, CUDA runtime 12.8.90.
