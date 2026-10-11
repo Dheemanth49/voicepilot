@@ -4,12 +4,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Type } from "typebox";
 import { toPiToolResult } from "./node_modules/@amaster.ai/pi-computer-use/dist/tool-result.js";
-import { createCloseAppTool } from "./voicepilot-close-app.mjs";
+import { createCloseAppTool, selectWindow } from "./voicepilot-close-app.mjs";
 
 const extensionRoot = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(extensionRoot, "..", "..");
 const CORE_TOOLS = new Set([
-  "list_apps", "list_windows", "launch_app", "get_window_state", "verify_state", "click",
+  "list_apps", "list_windows", "launch_app", "bring_to_front", "get_window_state", "verify_state", "click",
   "double_click", "right_click", "drag", "type_text", "press_key", "hotkey",
   "set_value", "scroll", "zoom",
 ]);
@@ -70,6 +70,19 @@ export function createComputerUseExtension({ createClient = createDirectMcpClien
             const activeClient = client;
             try {
               const result = await activeClient.callTool(driverName, args, signal ?? sessionSignal);
+              if (driverName === "launch_app" && !result?.isError) {
+                const target = getLaunchTarget(args);
+                try {
+                  const window = await bringLaunchedWindowToFront(activeClient, target, result, signal ?? sessionSignal);
+                  return {
+                    ...result,
+                    content: [...(result.content ?? []), { type: "text", text: `VoicePilot brought ${target} to the foreground.` }],
+                    structuredContent: { ...(result.structuredContent ?? {}), foreground: true, foregroundWindowId: window.window_id },
+                  };
+                } catch (error) {
+                  return toolError(`The app launched, but VoicePilot could not bring it to the foreground: ${error instanceof Error ? error.message : "window activation failed"}`);
+                }
+              }
               return toPiToolResult(result, driverName);
             } catch (error) {
               await discard(activeClient);
@@ -200,4 +213,53 @@ async function discardClient(activeClient) {
 
 function toolError(message) {
   return { content: [{ type: "text", text: message }], details: undefined, isError: true };
+}
+
+function getLaunchTarget(args) {
+  for (const key of ["name", "app", "application", "executable", "app_id", "appid", "bundle_id", "bundleid", "target"]) {
+    if (typeof args?.[key] === "string" && args[key].trim()) return args[key].trim();
+  }
+  return "the requested app";
+}
+
+async function bringLaunchedWindowToFront(client, target, launchResult, signal) {
+  const launchedPid = Number.isInteger(launchResult?.structuredContent?.pid)
+    ? launchResult.structuredContent.pid
+    : undefined;
+  let selected;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const listed = await client.callTool("list_windows", { on_screen_only: true }, signal);
+    if (listed?.isError) throw new Error(readToolError(listed) ?? "The CUA driver could not list visible windows.");
+    const windows = readWindowList(listed);
+    selected = launchedPid
+      ? windows.find((window) => window.pid === launchedPid && window.is_on_screen === true)
+      : selectWindow(windows, target);
+    if (selected && Number.isInteger(selected.pid) && Number.isInteger(selected.window_id)) break;
+    selected = undefined;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (!selected) throw new Error("The launched app has no visible window to activate yet.");
+  const focused = await client.callTool("bring_to_front", { pid: selected.pid, window_id: selected.window_id }, signal);
+  if (focused?.isError) throw new Error(readToolError(focused) ?? "The CUA driver rejected the window activation request.");
+  return selected;
+}
+
+function readWindowList(result) {
+  let windows = result?.structuredContent?.windows;
+  if (!Array.isArray(windows)) {
+    for (const item of result?.content ?? []) {
+      if (item?.type !== "text" || typeof item.text !== "string") continue;
+      try {
+        const parsed = JSON.parse(item.text);
+        windows = Array.isArray(parsed) ? parsed : parsed.windows;
+        if (Array.isArray(windows)) break;
+      } catch { /* Ignore non-JSON text blocks. */ }
+    }
+  }
+  if (!Array.isArray(windows)) throw new Error("The CUA driver returned no structured window list.");
+  return windows;
+}
+
+function readToolError(result) {
+  return result?.content?.find((item) => item?.type === "text" && typeof item.text === "string")?.text;
 }

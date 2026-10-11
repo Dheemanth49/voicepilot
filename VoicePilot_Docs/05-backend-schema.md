@@ -243,13 +243,13 @@ Rules:
 - Read volume back after setting.
 - Return both requested and actual level if available.
 
-### 7.5 `toggle_mute`
+### 7.5 `set_mute` (`voicepilot_set_mute`)
 
 ```json
 { "muted": true }
 ```
 
-This form sets mute state explicitly; avoid a toggle-only API when repeated requests could invert state unexpectedly.
+This form sets mute state explicitly; avoid a toggle-only API when repeated requests could invert state unexpectedly. VoicePilot binds its one-use tool call to the active task's exact requested boolean, applies it through Windows Core Audio, and verifies the read-back before returning success.
 
 ### 7.6 `search_web`
 
@@ -431,7 +431,7 @@ Do not store embedding arrays here; use ChromaDB. Chroma metadata should minimal
 ```json
 {
   "hotkey": "Alt+M",
-  "stt": { "provider": "local", "model": "pending-benchmark" },
+  "stt": { "provider": "local", "model": "large-v3" },
   "llm": { "provider": "local", "model": "gemma-4-e2b", "allowCloudFallback": false },
   "tts": { "enabled": true, "provider": "piper", "voiceId": "configured-voice" },
   "fileSearch": { "enabled": true, "model": "google/embeddinggemma-2", "maxResults": 5 },
@@ -462,6 +462,7 @@ This is a logical shape, not a secret store. Credentials should live in environm
 | `FILE_NOT_FOUND` | Result no longer exists | Refresh index/re-run search |
 | `FILE_OUTSIDE_APPROVED_ROOT` | Path validation failed | Block opening and log security event |
 | `VOLUME_SET_FAILED` | Windows audio API failed | Report that volume was not verified |
+| `MUTE_SET_FAILED` | Windows mute API failed or read-back did not match | Report that mute state was not verified |
 | `TTS_UNAVAILABLE` | Speech synthesis failed | Keep text response |
 
 ## 12. Contract-level security tests

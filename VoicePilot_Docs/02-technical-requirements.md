@@ -11,14 +11,14 @@ This document defines the technical architecture, service responsibilities, inte
 
 ## 2. Architecture principles
 
-1. **Pi is the agent harness.** It owns high-level task interpretation, planning, and tool selection.
+1. **Pi is the agent harness.** The bridge first asks Laya's local typed-choice model to choose chat, browser, desktop, or file search; Pi then owns task execution and tool selection for that route.
 2. **Use Pi RPC first.** Run Pi as a supervised subprocess and communicate through its supported RPC protocol and TypeScript client. Do not write a custom JSONL implementation unless the official client cannot meet a proven need.
-3. **Specialized models have bounded jobs.** STT transcribes speech; Gemma 4 E2B is the candidate reasoning LLM; Laya specializes in browser automation decisions; EmbeddingGemma 2 creates text embeddings; Piper speaks responses.
+3. **Specialized models have bounded jobs.** STT transcribes speech; Laya chooses the top-level route and makes browser decisions; a configured local LLM answers chat and handles language reasoning, with KiloCode as its availability fallback; EmbeddingGemma 2 creates text embeddings; Piper speaks responses.
 4. **Windows actions are tools, not generated code.** The LLM selects from predefined action schemas. It must not receive unrestricted shell, PowerShell, or Python execution.
 5. **Verification is separate from planning.** A model request is not evidence that an action succeeded.
 6. **UI and controlled browser are separate.** The web UI must not be the browser tab that Laya manipulates.
-7. **Local-first, with disclosure.** Prefer local processing for desktop actions and file indexing. When configured cloud STT/LLM is used, disclose data flow and do not imply offline operation.
-8. **Benchmark before declaring a winner.** STT and LLM configurations remain subject to tests on the actual Windows laptop.
+7. **Local-first.** Prefer local processing for desktop actions, file indexing, and LLM inference. Select KiloCode only if the configured local model or endpoint is unavailable.
+8. **Verify behavior on the target laptop.** faster-whisper Large-v3 is the selected MVP STT model; local-model selection and KiloCode fallback must be accepted on Windows.
 
 ## 3. Logical components
 
@@ -29,6 +29,7 @@ This document defines the technical architecture, service responsibilities, inte
 | Pi agent | Pi CLI in RPC mode | Conversational state, planning, tool selection, tool-result reasoning | Child process on Windows host |
 | STT adapter | Python service or worker | Recording/audio normalization and transcription adapter | Windows host |
 | Global hotkey/audio helper | Small native/Python helper | Global Alt+M toggle and audio capture coordination | Windows host |
+| Laya decision layer | Laya `Decider` API via the persistent Python worker | Choose one offered route: chat, browser, desktop, or file search | Windows host |
 | Browser automation | Laya Browser MCP | Dedicated browser tasks: navigation, search, clicks, forms, page inspection | Windows host/browser runtime |
 | Desktop automation | `@amaster.ai/pi-computer-use` and supported CUA runtime | Native windows, mouse, keyboard, app interaction | Windows host |
 | File-search service | Python + Sentence Transformers/Transformers + ChromaDB | Extract, chunk, embed, index, and retrieve approved files | Windows host |
@@ -75,7 +76,7 @@ The bridge must:
 
 ### 5.1 STT
 
-MVP default: faster-whisper Large-v3, selected by the project owner. Benchmark it against ARK-ASR-0.6B on the target laptop before considering a change.
+MVP model: faster-whisper Large-v3, selected by the project owner. No model comparison or benchmark is planned.
 
 Requirements:
 - Define one provider-neutral interface: `transcribe(audio) -> transcript + metadata`.
@@ -83,13 +84,14 @@ Requirements:
 - Return transcript, detected language if available, duration, latency, and error category.
 - Support command audio approximately 1–10 seconds for the MVP.
 - Do not execute a command if the transcript is empty or too uncertain to map safely; ask for repetition/clarification.
-- Keep a benchmark corpus of at least 20 phrases from multiple team members.
-- Measure both transcription quality and downstream command success; WER alone is not sufficient.
+- Verify an actual recording transcribes on the target Windows laptop and that a spoken command reaches the same task pipeline as typed input.
+- Runtime language, active model/device, and latency metadata are observability; they are not a comparative benchmark or acceptance score.
 
 ### 5.2 Main LLM and Pi
 
-- First local candidate: Gemma 4 E2B instruction-tuned model through a supported local inference runtime; verify the exact artifact/build and tool-call support before implementation is considered complete.
-- Optional cloud model: configurable fallback only if approved by the user/team. The UI must show when content is sent to a cloud provider.
+- Primary provider: configured local OpenAI-compatible inference endpoint registered in Pi's `models.json` (Ollama by default).
+- Fallback provider: KiloCode when the configured local provider/model is missing, the local `/models` endpoint does not list the configured model, or local generation fails before any tool action starts. Never replay a request after a tool action has started, and do not silently select another provider.
+- Report the active provider/model and fallback reason in bridge health and the UI. If neither provider has an available model, surface Pi as unavailable.
 - Tool calls must map to registered functions with typed parameters.
 - The model may create an ordered plan but must not define new executable tools at runtime.
 - Constrain the active task to one execution queue for the MVP.
@@ -139,7 +141,7 @@ Requirements:
 |---|---|---|---|
 | TR-01 | Global Alt+M starts and stops recording | P0 | Works while another app is foregrounded |
 | TR-02 | User can submit a typed transcript in developer mode | P0 | Runs through the same plan/execute pipeline |
-| TR-03 | STT adapter transcribes supported audio | P0 | Corpus benchmark is captured |
+| TR-03 | STT adapter transcribes supported audio | P0 | Real audio transcribes and its command reaches the task pipeline on the target laptop |
 | TR-04 | Pi RPC bridge processes prompts and streams status | P0 | UI shows an in-progress event and final result |
 | TR-05 | Open allowlisted app | P0 | Application/window appears and result verifies it |
 | TR-06 | Close app safely | P0 | Normal close first; confirmation when appropriate |
@@ -251,7 +253,7 @@ The architecture is ready for the hackathon demo when:
 - At least one browser tool and one desktop tool can be invoked from Pi.
 - STT can supply a transcript into that same action pipeline.
 - Confirmation gates are enforced by the bridge, not only by prompt wording.
-- All P0 acceptance checks pass and benchmark results are recorded.
+- All P0 acceptance checks pass on the target laptop.
 - The team has a documented fallback if a local model, GPU backend, or remote provider fails.
 
 ## 12. References
@@ -261,7 +263,6 @@ The architecture is ready for the hackathon demo when:
 - Pi computer-use: https://pi.dev/packages/@amaster.ai/pi-computer-use
 - Laya Browser MCP: https://github.com/bala2006/laya-browser-mcp
 - faster-whisper: https://github.com/SYSTRAN/faster-whisper
-- ARK-ASR-0.6B candidate: https://huggingface.co/Audio8/ARK-ASR-0.6B
 - Gemma 4 E2B: https://huggingface.co/google/gemma-4-E2B
 - EmbeddingGemma 2: https://huggingface.co/google/embeddinggemma-2
 - ChromaDB: https://docs.trychroma.com/

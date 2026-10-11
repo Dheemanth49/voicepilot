@@ -38,7 +38,7 @@ Do not begin by building all UI screens, benchmarking every model, or integratin
 
 | Member | Primary ownership | Deliverables | Integration responsibility |
 |---|---|---|---|
-| Member 1 — Voice | STT benchmark, microphone/audio, global Alt+M, Piper adapter | `transcribe()` contract, recording events, short TTS output | Connect transcript and status events to bridge |
+| Member 1 — Voice | Selected Whisper model, microphone/audio, global Alt+M, Piper adapter | `transcribe()` contract, recording events, short TTS output | Connect transcript and status events to bridge |
 | Member 2 — Agent/bridge | Node bridge, Pi RPC lifecycle, LLM config, event schemas | Task API, RPC client, structured status/step events | Owns cross-module contract and runs integration tests |
 | Member 3 — Desktop/browser tools | Pi computer-use extension, CUA Windows runtime, volume tool, Laya MCP adapter | Tested app/window/scroll/volume/browser tools | Demonstrate real PC actions and enforce tool validation |
 | Member 4 — UI/retrieval/QA | React/Vite UI, confirmation/history, EmbeddingGemma 2 index, demo plan | UI states, search results, acceptance checklist | Maintain test commands, fixtures, design consistency, and final rehearsal |
@@ -69,7 +69,7 @@ Everyone may contribute code across modules, but each module has one accountable
 | 8:00–10:00 | Safety, approval workflow, failure handling | No false-success and no bypassable approval |
 | 10:00–12:00 | Laya integration and browser task suite | Browser tools available through Pi and stable on the target machine |
 | 12:00–15:00 | Semantic file index and `search_files`/`open_file` | Results are correct for known fixture queries; paths are validated |
-| 15:00–17:00 | Gemma tool-use evaluation; add cloud fallback only if needed | Record tool-call reliability and latency; no unreviewed provider switch |
+| 15:00–17:00 | Configure local-first LLM and KiloCode availability fallback | Confirm the selected provider and fallback reason are visible; accept both routes on Windows |
 | 17:00–19:00 | Piper TTS, contextual commands, history polish | TTS failure doesn't block UI; contextual flow passes tests |
 | 19:00–21:00 | Integration and regressions | All P0 and selected P1 cases pass |
 | 21:00–23:00 | Rehearse, benchmark, create backup plan | Demo completes twice without restart |
@@ -123,8 +123,7 @@ Exit criteria:
 ### M3 — Voice
 
 Tasks:
-- Benchmark the selected faster-whisper Large-v3 model against ARK-ASR-0.6B using the same 20+ commands.
-- Record reference transcripts, hypothesis, command-intent correctness, latency, memory, and CPU/GPU usage.
+- Verify that the selected faster-whisper Large-v3 model transcribes a real microphone recording and the transcript reaches the Pi task pipeline.
 - Implement provider-neutral STT adapter.
 - Implement global Alt+M helper and clean stop behavior.
 - Add empty/failed recording states and repeated-command handling.
@@ -132,7 +131,7 @@ Tasks:
 Exit criteria:
 - Alt+M works when another app is focused.
 - A recorded command reaches the same Pi pipeline used by typed input.
-- The chosen STT model and test results are written to the repo.
+- The selected faster-whisper Large-v3 model transcribes a real recording and the transcript reaches the same Pi pipeline used by typed input.
 
 ### M4 — Safety and reliable status
 
@@ -178,20 +177,8 @@ Exit criteria:
 
 ## 7. Model benchmark plan
 
-### STT benchmark
-Use a fixed set of at least 20 phrases such as:
-- “Open Notepad.”
-- “Set volume to thirty percent.”
-- “Search for federated learning with TinyViT.”
-- “Scroll down a little, then go back.”
-- “Find my notes about the GasGuard project.”
-
-Capture for each candidate:
-- Reference transcript and recognized transcript.
-- Correct intent/slots, especially app names, numeric values, direction, and search query.
-- Recording-stop-to-transcript latency.
-- CPU/GPU use and peak memory.
-- Errors, crashes, and warm/cold startup differences.
+### STT acceptance
+faster-whisper Large-v3 is the selected MVP model. No model comparison or benchmark is planned. On the target Windows laptop, verify that a real microphone recording produces a usable transcript, that the active model/device are reported correctly, and that the spoken command enters the same Pi task pipeline as typed input. Resolve any transcription or pipeline failures before demo rehearsal.
 
 ### LLM benchmark
 Test the exact local Gemma 4 E2B runtime for:
@@ -201,7 +188,7 @@ Test the exact local Gemma 4 E2B runtime for:
 - Refusing unsupported tools.
 - Respecting untrusted webpage/document content.
 
-Record tool-call validity, task success, median/p95 latency over repeated runs, and memory use. If local quality is insufficient, test an explicitly configured cloud fallback rather than silently swapping models.
+Confirm local-first selection with a running local inference endpoint, then stop that endpoint and confirm KiloCode is selected with a visible fallback reason. Confirm a local generation error can retry through KiloCode before any tool starts, and that requests are never replayed after tool execution begins. Confirm startup reports Pi unavailable if neither provider can supply a model. Do not silently select another provider.
 
 ### Laya/browser benchmark
 Test at least these tasks:
@@ -218,7 +205,7 @@ Record completion rate and median/p95 time. Compare deterministic browser action
 | Risk | Severity | Mitigation / fallback |
 |---|---|---|
 | CUA runtime incompatibility | High | Validate Windows support at M1 before UI polish |
-| Gemma tool-calling weak/slow | High | Benchmark early; cloud fallback opt-in or deterministic rules for common actions |
+| Local LLM unavailable | High | Check configured local endpoint/model at startup and select KiloCode; show the active provider and fallback reason |
 | STT recognizes words but wrong numeric slots | High | Evaluate command-level correctness and confirm uncertain values |
 | Pi RPC/MCP integration fails | High | Prove one MCP or desktop tool through Pi early; use a tested custom Pi extension adapter if needed |
 | Laya slower than expected | Medium | Use deterministic browser path for basic navigation/search; keep Laya for complex UI decisions |
@@ -244,7 +231,7 @@ Record completion rate and median/p95 time. Compare deterministic browser action
 - [ ] App starts from documented instructions on the demo laptop.
 - [ ] Pi RPC starts reliably and exits cleanly.
 - [ ] Alt+M works outside the VoicePilot browser window.
-- [ ] STT model and latency benchmark are documented.
+- [ ] A real Whisper transcription reaches the task pipeline on the target Windows laptop.
 - [ ] Open app, safe close, scroll, volume, mute, search, and browser navigation pass.
 - [ ] Confirmation rejection and timeout do not execute the action.
 - [ ] Unsupported tools and invalid parameters are blocked.

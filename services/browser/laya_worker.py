@@ -4,16 +4,59 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import secrets
 import sys
 import time
 import traceback
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
+from urllib.request import Request, urlopen
 
 
-def _run(request: Any, decider: Any, driver_type: Any, active_values: dict[str, str], endpoint: str, target_url_contains: str) -> dict[str, Any]:
+def _open_task_tab(endpoint: str) -> str:
+    """Create a fresh visible browser tab and return a unique URL selector for it."""
+    marker = f"voicepilot-task-{secrets.token_hex(12)}"
+    blank_url = f"about:blank#{marker}"
+    request = Request(f"{endpoint}/json/new?{quote(blank_url, safe='')}", method="PUT")
+    try:
+        with urlopen(request, timeout=5) as response:
+            target = json.loads(response.read().decode("utf-8"))
+    except Exception as error:
+        raise RuntimeError(f"Could not open a new browser tab over CDP: {error}") from error
+    if not isinstance(target, dict) or target.get("type") != "page" or not isinstance(target.get("webSocketDebuggerUrl"), str):
+        raise RuntimeError("The browser did not return a usable new tab from CDP.")
+    return marker
+
+
+def _run(request: Any, decider: Any, driver_type: Any, active_values: dict[str, str], endpoint: str) -> dict[str, Any]:
     if not isinstance(request, dict):
         raise ValueError("Each worker request must be a JSON object.")
+    if request.get("type") == "route":
+        text = request.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+            raise ValueError("text must be a non-empty string of at most 2,000 characters.")
+        from localdecide import choice
+        decision = decider.decider.decide(text.strip(), {
+            "route": choice(
+                "Choose the single capability that should handle this request. Select chat for questions and conversation without computer actions; browser for web search or website interaction; desktop for Windows apps, windows, scrolling, or system controls; file_search for finding local files in approved folders.",
+                {
+                    "chat": "Answer a question or continue a conversation. Do not perform a computer action.",
+                    "browser": "Search the web or open, inspect, or interact with a website.",
+                    "desktop": "Launch or close a Windows app, scroll a window, or change system volume/audio.",
+                    "file_search": "Search local files or documents in the user's approved folders.",
+                },
+            )
+        })
+        if not decision.ok or decision.answers is None:
+            raise RuntimeError(f"Laya could not safely choose a route: {decision.error or 'no decision'}")
+        return {
+            "ok": True,
+            "route": decision.answers.choice("route"),
+            "confidence": decision.answers.confidence("route"),
+            "backend": decision.answers.backend,
+        }
+
     goal = request.get("goal")
     start_url = request.get("start_url")
     values = request.get("text_values", {})
@@ -31,12 +74,31 @@ def _run(request: Any, decider: Any, driver_type: Any, active_values: dict[str, 
 
     active_values.clear()
     active_values.update({key.strip().casefold(): value for key, value in values.items()})
-    driver = driver_type(endpoint=endpoint, target_url_contains=target_url_contains)
+    # Never attach a browser task to, or navigate over, a tab the user already
+    # has open. Create a uniquely marked tab and let CDPDriver attach to it.
+    task_tab_marker = _open_task_tab(endpoint)
+    driver = driver_type(endpoint=endpoint, target_url_contains=task_tab_marker)
     try:
-        # CDPDriver attaches to a page in the user's browser. Navigate that page to
-        # the exact destination authorized by the bridge before asking Laya to act.
+        # Navigate only the newly created task tab to the user-authorized URL.
         driver._call("Page.navigate", url=start_url)
         time.sleep(1)
+        # A plain "open this URL" command is complete as soon as the requested
+        # site is loaded. Asking the page-action model to click a control just to
+        # confirm navigation can incorrectly turn this simple task into a failure.
+        confirmation = re.fullmatch(r"Confirm that ([a-z0-9.-]+) has opened\.", goal.strip(), re.IGNORECASE)
+        if confirmation:
+            current_url = str(driver._eval("location.href") or "")
+            expected_host = (urlsplit(start_url).hostname or confirmation.group(1)).casefold().removeprefix("www.")
+            current_host = (urlsplit(current_url).hostname or "").casefold().removeprefix("www.")
+            if current_host != expected_host and not current_host.endswith(f".{expected_host}"):
+                raise RuntimeError(f"Navigation did not reach {expected_host}; the browser is at {current_url or 'an unknown URL'}.")
+            return {
+                "ok": True,
+                "solved": True,
+                "stopped": "done",
+                "summary": {"goal": goal, "url": current_url, "solved": True, "stopped": "done", "steps": 1},
+                "steps": [{"number": 1, "operation": "NAVIGATE", "label": current_url, "confidence": 1.0}],
+            }
         run = decider.run(driver, goal.strip())
     finally:
         driver.close()
@@ -60,7 +122,7 @@ def _run(request: Any, decider: Any, driver_type: Any, active_values: dict[str, 
 
 def main() -> int:
     try:
-        from localdecide import BrowserDecider
+        from localdecide import BrowserDecider, Decider
         from localdecide.drivers import CDPDriver
     except Exception as error:
         print(json.dumps({"ok": False, "error": f"Laya runtime is unavailable: {error}"}), flush=True)
@@ -74,13 +136,16 @@ def main() -> int:
             raise ValueError(f"No user-provided text value was supplied for the field '{label}'.")
         return active_values[label]
 
-    decider = BrowserDecider(text_provider=provider, max_steps=12)
+    # Windows may need longer than Laya's 30-second default while the model is
+    # loading or doing its first inference. Keep this under the bridge worker's
+    # five-minute request timeout so the caller receives Laya's actual result.
+    laya_decider = Decider(timeout=240)
+    decider = BrowserDecider(decider=laya_decider, text_provider=provider, max_steps=12)
     endpoint = os.environ.get("VOICEPILOT_BROWSER_CDP_ENDPOINT", "http://127.0.0.1:9222").rstrip("/")
-    target_url_contains = os.environ.get("VOICEPILOT_BROWSER_TARGET_URL_CONTAINS", "")
     for line in sys.stdin:
         try:
             request = json.loads(line)
-            response = _run(request, decider, CDPDriver, active_values, endpoint, target_url_contains)
+            response = _run(request, decider, CDPDriver, active_values, endpoint)
         except Exception as error:
             response = {"ok": False, "error": str(error), "trace": traceback.format_exc(limit=3)}
         print(json.dumps(response, ensure_ascii=False, default=str), flush=True)

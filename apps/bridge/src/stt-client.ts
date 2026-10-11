@@ -3,7 +3,16 @@ import { createInterface } from "node:readline";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
-type Pending = { resolve: (value: string) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
+export interface SpeechTranscription {
+  text: string;
+  language?: string;
+  languageProbability?: number;
+  latencyMs?: number;
+  model?: string;
+  device?: "cpu" | "cuda";
+}
+
+type Pending = { resolve: (value: SpeechTranscription) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 
 /** Owns one warm, local faster-whisper worker and correlates JSONL requests. */
 export class SttClient {
@@ -11,6 +20,7 @@ export class SttClient {
   private pending = new Map<string, Pending>();
   private starting?: Promise<void>;
   private ready = false;
+  private startupFailed = false;
   activeModel?: string;
   activeDevice?: "cpu" | "cuda";
   devicePreference?: "auto" | "cpu" | "cuda";
@@ -25,6 +35,7 @@ export class SttClient {
   async start(): Promise<void> {
     if (!this.enabled) { this.failureReason = "Voice is disabled. Run setup:speech, then set VOICEPILOT_STT_ENABLED=1 in .env."; return; }
     if (this.ready) return;
+    if (this.startupFailed) throw new Error(this.failureReason ?? "Speech recognition failed to start. Restart VoicePilot after fixing the speech setup.");
     if (this.starting) return this.starting;
     this.starting = this.startWorker();
     try { await this.starting; } finally { this.starting = undefined; }
@@ -61,12 +72,27 @@ export class SttClient {
           resolveReady();
           return;
         }
+        if (record.type === "runtime_update") {
+          this.activeModel = typeof record.model === "string" ? record.model : this.activeModel;
+          this.activeDevice = record.device === "cuda" ? "cuda" : record.device === "cpu" ? "cpu" : this.activeDevice;
+          this.devicePreference = record.devicePreference === "auto" || record.devicePreference === "cpu" || record.devicePreference === "cuda" ? record.devicePreference : this.devicePreference;
+          this.backend = record.backend === "ctranslate2" ? "ctranslate2" : this.backend;
+          this.fallbackReason = typeof record.fallbackReason === "string" ? record.fallbackReason : this.fallbackReason;
+          return;
+        }
         if (record.type === "startup_error") { clearTimeout(timer); rejectReady(new Error(String(record.error ?? "Speech worker failed to start."))); return; }
         if (typeof record.id === "string") {
           const pending = this.pending.get(record.id);
           if (!pending) return;
           clearTimeout(pending.timer); this.pending.delete(record.id);
-          if (record.ok === true && typeof record.text === "string") pending.resolve(record.text);
+          if (record.ok === true && typeof record.text === "string") pending.resolve({
+            text: record.text,
+            ...(typeof record.language === "string" ? { language: record.language } : {}),
+            ...(typeof record.languageProbability === "number" ? { languageProbability: record.languageProbability } : {}),
+            ...(typeof record.latencyMs === "number" ? { latencyMs: record.latencyMs } : {}),
+            ...(typeof record.model === "string" ? { model: record.model } : {}),
+            ...(record.device === "cpu" || record.device === "cuda" ? { device: record.device } : {}),
+          });
           else pending.reject(new Error(typeof record.error === "string" ? record.error : "Transcription failed."));
         }
       });
@@ -84,14 +110,19 @@ export class SttClient {
         this.pending.clear(); this.child = undefined;
       });
     });
-    try { await readyPromise; } catch (error) { this.failureReason = error instanceof Error ? error.message : "Speech worker failed."; await this.stop(); throw new Error(this.failureReason); }
+    try { await readyPromise; } catch (error) {
+      this.failureReason = error instanceof Error ? error.message : "Speech worker failed.";
+      this.startupFailed = true;
+      await this.stop();
+      throw new Error(this.failureReason);
+    }
   }
 
-  async transcribe(audioPath: string): Promise<string> {
+  async transcribe(audioPath: string): Promise<SpeechTranscription> {
     await this.start();
     if (!this.ready || !this.child) throw new Error(this.failureReason ?? "Speech recognition is unavailable.");
     const id = randomUUID();
-    return new Promise<string>((resolveResult, rejectResult) => {
+    return new Promise<SpeechTranscription>((resolveResult, rejectResult) => {
       const timer = setTimeout(() => { this.pending.delete(id); rejectResult(new Error("Transcription timed out after 3 minutes.")); }, 180_000);
       this.pending.set(id, { resolve: resolveResult, reject: rejectResult, timer });
       this.child!.stdin.write(`${JSON.stringify({ id, audioPath })}\n`, (error) => {

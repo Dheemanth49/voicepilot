@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import gc
 import os
 import sys
 import time
@@ -150,13 +151,55 @@ def main() -> int:
             if not isinstance(request_id, str) or not isinstance(audio_path, str):
                 raise ValueError("Each request needs a string id and audioPath.")
             started = time.perf_counter()
-            segments, info = model.transcribe(
-                audio_path,
-                beam_size=5,
-                vad_filter=True,
-                without_timestamps=True,
-            )
-            text = " ".join(segment.text.strip() for segment in segments).strip()
+            try:
+                segments, info = model.transcribe(
+                    audio_path,
+                    beam_size=5,
+                    vad_filter=True,
+                    without_timestamps=True,
+                )
+                text = " ".join(segment.text.strip() for segment in segments).strip()
+            except Exception as error:
+                can_fallback = (
+                    device_preference == "auto"
+                    and active_device == "cuda"
+                    and fallback_model
+                    and fallback_model != active_model
+                    and is_memory_error(error)
+                )
+                if not can_fallback:
+                    raise
+                fallback_message = f"CUDA transcription ran out of memory ({type(error).__name__}: {error}); switched to CPU {fallback_model}."
+                emit({"type": "status", "status": "loading_fallback", "provider": provider,
+                      "model": fallback_model, "fallbackFrom": active_model, "device": "cpu"})
+                previous_model = model
+                model = None
+                gc.collect()
+                try:
+                    replacement_model = load_model(fallback_model, "cpu")
+                except Exception as fallback_error:
+                    model = previous_model
+                    raise RuntimeError(
+                        f"CUDA transcription failed ({type(error).__name__}: {error}); "
+                        f"CPU fallback {fallback_model} could not be loaded ({type(fallback_error).__name__}: {fallback_error})."
+                    ) from fallback_error
+                model = replacement_model
+                del previous_model
+                gc.collect()
+                fallback_from = model_name
+                active_model = fallback_model
+                active_device = "cpu"
+                fallback_reason = fallback_message
+                emit({"type": "runtime_update", "model": active_model, "device": active_device,
+                      "devicePreference": device_preference, "backend": "ctranslate2",
+                      "fallbackFrom": fallback_from, "fallbackReason": fallback_reason})
+                segments, info = model.transcribe(
+                    audio_path,
+                    beam_size=5,
+                    vad_filter=True,
+                    without_timestamps=True,
+                )
+                text = " ".join(segment.text.strip() for segment in segments).strip()
             emit({
                 "id": request_id,
                 "ok": True,

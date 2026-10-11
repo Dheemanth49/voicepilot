@@ -1,12 +1,22 @@
-param([switch]$Gpu, [string]$ProjectRoot)
+param([switch]$Gpu, [switch]$Cpu, [string]$ProjectRoot)
 
 $ErrorActionPreference = "Stop"
 $repoRoot = if ($ProjectRoot) { (Resolve-Path -LiteralPath $ProjectRoot).Path } else { (Resolve-Path (Join-Path $PSScriptRoot "..")).Path }
 $setupCommon = Join-Path $PSScriptRoot "voicepilot-setup-common.psm1"
 Import-Module $setupCommon -Force
+if ($Gpu -and $Cpu) { throw "Choose either GPU or CPU file-search setup, not both." }
+$useGpu = $Gpu
+if (-not $Gpu -and -not $Cpu) {
+  $detectedNvidiaSmi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+  if (-not $detectedNvidiaSmi) { $detectedNvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue }
+  if ($detectedNvidiaSmi) {
+    $useGpu = $true
+    Write-Host "NVIDIA detected. Automatic file-search setup selects the GPU runtime; use npm run setup:file-search:cpu to force CPU mode."
+  }
+}
 $cpuVenvPath = Join-Path $repoRoot ".voicepilot-file-search\venv"
 $gpuVenvPath = Join-Path $repoRoot ".voicepilot-file-search\venv-gpu"
-$venvPath = if ($Gpu) { $gpuVenvPath } else { $cpuVenvPath }
+$venvPath = if ($useGpu) { $gpuVenvPath } else { $cpuVenvPath }
 $venvPython = Join-Path $venvPath "Scripts\python.exe"
 $pythonPath = $null
 $pythonProbe = "import sys; print(sys.executable if sys.version_info[:2] == (3, 12) else '')"
@@ -23,7 +33,7 @@ function Resolve-Python312([string]$commandPath, [string[]]$prefixArguments = @(
 }
 
 $cudaFlavor = $null
-if ($Gpu) {
+if ($useGpu) {
   $nvidiaSmi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
   if (-not $nvidiaSmi) { $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue }
   if (-not $nvidiaSmi) { throw "VoicePilot could not find nvidia-smi. Install a compatible NVIDIA GeForce driver, open a new PowerShell window, and rerun npm run setup:file-search:gpu." }
@@ -59,7 +69,7 @@ if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
   & $pythonPath -m venv $venvPath
   if ($LASTEXITCODE -ne 0) { throw "Could not create VoicePilot's file-search Python environment." }
 }
-$requirementsName = if ($Gpu) { "requirements-gpu-$cudaFlavor.txt" } else { "requirements.txt" }
+$requirementsName = if ($useGpu) { "requirements-gpu-$cudaFlavor.txt" } else { "requirements.txt" }
 $requirementsPath = Join-Path $repoRoot "services\file_search\$requirementsName"
 $env:HF_HOME = Join-Path $repoRoot ".data\voicepilot\models"
 $env:PIP_DISABLE_PIP_VERSION_CHECK = "1"
@@ -72,11 +82,11 @@ try {
 
   Write-Host "Downloading and checking the local EmbeddingGemma 2 model. This may take several minutes."
   $previousDevicePreference = $env:VOICEPILOT_FILE_SEARCH_DEVICE
-  $env:VOICEPILOT_FILE_SEARCH_DEVICE = if ($Gpu) { "cuda" } else { "cpu" }
+  $env:VOICEPILOT_FILE_SEARCH_DEVICE = if ($useGpu) { "cuda" } else { "cpu" }
   try {
     & $venvPython -c "from services.file_search.index import SentenceTransformerEmbedder; import os; model = SentenceTransformerEmbedder(device_preference=os.environ['VOICEPILOT_FILE_SEARCH_DEVICE']); model.encode(['VoicePilot local search setup check'], prompt_name='SearchQuery'); print('EmbeddingGemma 2 is ready on ' + model.active_device); assert model.active_device == os.environ['VOICEPILOT_FILE_SEARCH_DEVICE']"
     if ($LASTEXITCODE -ne 0) {
-      $message = if ($Gpu) { "CUDA PyTorch or EmbeddingGemma GPU smoke check failed. The CPU environment and current .env selection were left unchanged. Check the NVIDIA driver and rerun npm run setup:file-search:gpu." } else { "EmbeddingGemma 2 could not be downloaded or loaded. Check available disk space and network access, then rerun npm run setup:file-search." }
+      $message = if ($useGpu) { "CUDA PyTorch or EmbeddingGemma GPU smoke check failed. The CPU environment and current .env selection were left unchanged. Check the NVIDIA driver and rerun npm run setup:file-search:gpu." } else { "EmbeddingGemma 2 could not be downloaded or loaded. Check available disk space and network access, then rerun npm run setup:file-search:cpu." }
       throw $message
     }
   } finally {
@@ -89,14 +99,14 @@ try {
   $envValues = @{
     VOICEPILOT_FILE_SEARCH_ENABLED = "1"
     VOICEPILOT_FILE_SEARCH_PYTHON = $venvPython
-    VOICEPILOT_FILE_SEARCH_DEVICE = if ($Gpu) { "auto" } else { "cpu" }
+    VOICEPILOT_FILE_SEARCH_DEVICE = if ($useGpu) { "auto" } else { "cpu" }
   }
   Set-VoicePilotEnvValues -Path $envPath -Values $envValues
 } finally {
   Pop-Location
 }
 
-if ($Gpu) {
+if ($useGpu) {
   Write-Host "GPU-enabled semantic file search is installed and enabled. Restart VoicePilot and run npm run diagnose:gpu to verify the active device."
 } else {
   Write-Host "CPU semantic file search is installed and enabled. Restart VoicePilot, then add and index folders from Settings."

@@ -210,5 +210,5 @@ Keep shared state and transport logic outside presentation components. The UI sh
 - [ ] Approve/reject buttons are visually distinct and keyboard accessible.
 - [ ] Failure messages are clear and offer a plausible next step.
 - [ ] Search results show why a document matched and open only the selected result ID.
-- [ ] Cloud processing is disclosed where it occurs.
+- [x] Cloud processing is disclosed where it occurs.
 - [ ] Core experience remains usable with Piper disabled.

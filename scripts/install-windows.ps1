@@ -70,17 +70,17 @@ try {
     throw "The VoicePilot root package-lock.json is missing. Re-extract the complete project folder and rerun setup."
   }
   Write-Host "Installing the locked bridge and UI dependencies..."
-  & npm ci
+  & npm.cmd ci
   if ($LASTEXITCODE -ne 0) { throw "VoicePilot dependencies could not be installed with npm ci. Check network access and rerun this setup command." }
 
-  & npm run setup:pi
+  & npm.cmd run setup:pi
   if ($LASTEXITCODE -ne 0) { throw "VoicePilot/Pi setup failed. Resolve the reported prerequisite or network issue and rerun this command." }
 
   $envPath = Join-Path $repoRoot ".env"
   $envText = Get-Content -LiteralPath $envPath -Raw
   $answer = Read-Host "Install local faster-whisper speech recognition now? It downloads Python packages and a large model on first use [Y/n]"
   if ($answer -notmatch "^(n|no)$") {
-    & npm run setup:speech
+    & npm.cmd run setup:speech
     if ($LASTEXITCODE -ne 0) { throw "Speech setup failed. Pi remains installed; fix Python/network access and run npm run setup:speech." }
     if ($envText -match "(?m)^VOICEPILOT_STT_ENABLED=") {
       $envText = [regex]::Replace($envText, "(?m)^VOICEPILOT_STT_ENABLED=.*$", "VOICEPILOT_STT_ENABLED=1")
@@ -90,10 +90,19 @@ try {
     [System.IO.File]::WriteAllText($envPath, $envText, [System.Text.UTF8Encoding]::new($false))
   }
 
-  $fileSearchAnswer = Read-Host "Install local semantic file search now? It installs CPU PyTorch and downloads EmbeddingGemma 2 on this computer [y/N]"
-  if ($fileSearchAnswer -match "^(y|yes)$") {
-    & npm run setup:file-search
-    if ($LASTEXITCODE -ne 0) { throw "Semantic file-search setup failed. Pi and VoicePilot remain installed; check Python 3.12, disk space, and network access, then run npm run setup:file-search." }
+  $nvidiaSmi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+  if (-not $nvidiaSmi) { $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue }
+  $fileSearchSetupCommand = if ($nvidiaSmi) { "setup:file-search:gpu" } else { "setup:file-search" }
+  $fileSearchPrompt = if ($nvidiaSmi) {
+    "Install local semantic file search now? NVIDIA GPU detected; the installer will use CUDA. Type CPU to force CPU mode [y/N]"
+  } else {
+    "Install local semantic file search now? No NVIDIA GPU was detected, so it will use CPU mode [y/N]"
+  }
+  $fileSearchAnswer = Read-Host $fileSearchPrompt
+  if ($fileSearchAnswer -match "^(y|yes|cpu)$") {
+    if ($fileSearchAnswer -match "^cpu$") { $fileSearchSetupCommand = "setup:file-search:cpu" }
+    & npm.cmd run $fileSearchSetupCommand
+    if ($LASTEXITCODE -ne 0) { throw "Semantic file-search setup failed. Pi and VoicePilot remain installed; check Python 3.12, disk space, and network access, then run npm run $fileSearchSetupCommand." }
     $envText = Get-Content -LiteralPath $envPath -Raw
   }
   if ($envText -match "(?m)^VOICEPILOT_GLOBAL_HOTKEY_ENABLED=") {

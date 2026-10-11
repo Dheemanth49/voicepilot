@@ -8,6 +8,7 @@ const SAFE_TOOLS = new Set([
   "computer_use_get_window_state",
   "computer_use_list_apps",
   "computer_use_list_windows",
+  "computer_use_bring_to_front",
   "computer_use_tools",
   "computer_use_verify_state",
 ]);
@@ -200,9 +201,50 @@ export function createVolumeTool({ fetcher = globalThis.fetch, environment = pro
   };
 }
 
+export function createMuteTool({ fetcher = globalThis.fetch, environment = process.env } = {}) {
+  return {
+    name: "voicepilot_set_mute",
+    label: "Mute or unmute system audio",
+    description: "Set Windows master audio to muted or unmuted and verify the read-back. Use only for a direct user request; muted must be an explicit boolean.",
+    parameters: Type.Object({
+      muted: Type.Boolean({ description: "True to mute system audio; false to unmute it." }),
+    }),
+    async execute(actionId, input, signal) {
+      if (typeof input?.muted !== "boolean") return toolError("Mute state must be explicitly true or false.");
+      const token = environment.VOICEPILOT_APPROVAL_TOKEN;
+      const bridgeUrl = (environment.VOICEPILOT_APPROVAL_URL ?? "http://127.0.0.1:8787").replace(/\/$/, "");
+      if (typeof token !== "string" || token.length < 32 || typeof fetcher !== "function" || typeof actionId !== "string" || !actionId) {
+        return toolError("VoicePilot could not authorize this mute action.");
+      }
+      try {
+        const response = await fetcher(`${bridgeUrl}/api/internal/volume/mute`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify({ actionId, muted: input.muted }),
+          signal,
+        });
+        const result = await readJson(response);
+        if (!response.ok || result.verified !== true || result.muted !== input.muted) {
+          return toolError(result.message ?? "Windows mute state could not be verified.");
+        }
+        return {
+          content: [{ type: "text", text: `Windows master audio is verified ${result.muted ? "muted" : "unmuted"}.` }],
+          details: { muted: result.muted, verified: true },
+        };
+      } catch (error) {
+        const message = error instanceof Error && error.name === "AbortError"
+          ? "The mute action was cancelled."
+          : "VoicePilot could not reach the local mute service.";
+        return toolError(message);
+      }
+    },
+  };
+}
+
 export default function voicePilotApprovalExtension(pi) {
   pi.on("tool_call", createApprovalGate());
   pi.registerTool(createVolumeTool());
+  pi.registerTool(createMuteTool());
   pi.registerCommand("voicepilot-approval", {
     description: "Shows that VoicePilot's approval gate is active for desktop actions.",
     handler: (_args, context) => context.ui.notify("VoicePilot approval gate is active.", "info"),

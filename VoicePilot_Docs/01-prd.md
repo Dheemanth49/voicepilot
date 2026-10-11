@@ -42,7 +42,7 @@
 
 VoicePilot is a voice-first desktop assistant for Windows 11. The user speaks a command; a speech-to-text (STT) component transcribes it; the Pi agent, using a configured language model, interprets the request and selects from a constrained tool set; computer-use or browser tools perform the action; and the UI reports the verified result. A local semantic-search service powered by Google EmbeddingGemma 2 adds the ability to find files and documents by topic rather than exact filename. Piper TTS can speak short responses aloud.
 
-The project will reuse existing agent and automation infrastructure rather than implement a new agent framework. Pi is the orchestration layer. Pi RPC is the initial integration path between a local Node.js/TypeScript bridge and the running Pi process. Laya Browser MCP is the specialized browser automation path. The Pi computer-use extension and its supported Windows runtime are the native desktop-control path. The React web UI is served locally and communicates with the bridge.
+The project will reuse existing agent and automation infrastructure rather than implement a new agent framework. Pi is the orchestration layer. Pi RPC is the integration path between the local Node.js/TypeScript bridge and Pi. Before dispatch, the bridge uses Laya's local typed-choice model to select chat, browser, desktop, or file search; the same persistent Laya worker then powers browser decisions when that route is selected. The Pi computer-use extension and its supported Windows runtime are the native desktop-control path. The React web UI is served locally and communicates with the bridge.
 
 The first objective is not to support every possible computer task. It is to create a reliable, attractive demonstration of a focused set of actions: open and close supported applications, scroll, set or mute system volume, search the web, navigate browser history, and search/open files. Multi-step commands, safe confirmations, contextual follow-ups, and verified execution are the primary differentiators.
 
@@ -64,7 +64,7 @@ A user can say what they want done, not how to click through it. VoicePilot inte
 
 **VoicePilot is a local-first voice agent for desktop productivity and accessibility.** It combines voice interaction, agent-based planning, controlled browser and desktop tools, and semantic file search. The system is designed to be transparent: users can inspect the transcript, intended actions, execution status, and recent activity.
 
-“Local-first” means that desktop control and the file index remain on the user's machine, and local model options are preferred where they meet the quality bar. The initial STT and LLM configuration is still subject to benchmark results. If a cloud provider is used, the UI must disclose that audio or prompt content is sent to that provider.
+“Local-first” means that desktop control, file indexing, and the primary language model run on the user's machine. VoicePilot selects an available configured local LLM first and uses KiloCode when the local provider/model or inference endpoint is unavailable. faster-whisper Large-v3 is the selected MVP STT model.
 
 ## 3. Goals and non-goals
 
@@ -74,8 +74,9 @@ A user can say what they want done, not how to click through it. VoicePilot inte
 - Use **Alt+M** as the global start/stop recording toggle.
 - Convert speech to text with a tested STT model.
 - Use Pi as the agent harness, with Pi RPC connecting it to the local application bridge.
-- Use a local Gemma 4 E2B instruction-tuned model as the first local LLM candidate, provided its runtime and tool-calling behavior pass the integration tests.
-- Use Laya Browser MCP for appropriate browser tasks, with a separate computer-use path for native Windows interactions.
+- Use Laya's local typed-choice model for the top-level task route and browser decisions.
+- Use a configured local LLM as the primary chat/reasoning model; fall back to the configured KiloCode provider only when local inference is unavailable.
+- Use a separate computer-use path for native Windows interactions.
 - Support a bounded set of native desktop actions and browser navigation/search.
 - Search selected local folders semantically with `google/embeddinggemma-2` and a local vector index.
 - Provide visible status, confirmation, errors, and action history.
@@ -170,7 +171,7 @@ The known rubric is: Working MVP 30%, AI/SaaS relevance 20%, UI/UX 15%, market p
 | Local application bridge | Node.js + TypeScript | Planned; owns WebSocket/API, Pi process, events, and coordination |
 | Agent integration | Pi RPC | Initial integration choice; use the maintained TypeScript RPC client where feasible |
 | Agent model | Gemma 4 E2B instruction-tuned checkpoint | Candidate; verify exact model ID, runtime support, context, and real tool-calling quality |
-| STT | faster-whisper Large-v3 vs ARK-ASR-0.6B | faster-whisper Large-v3 is the MVP default selected by the project owner; benchmark against ARK-ASR-0.6B on the target laptop before reconsidering |
+| STT | faster-whisper Large-v3 | Selected MVP model; verify real transcription and command-pipeline integration on the target laptop |
 | Browser | Laya Browser MCP | Chosen candidate; expose tools to Pi through an explicit MCP adapter/extension and verify sampling/tool compatibility |
 | Native computer use | `@amaster.ai/pi-computer-use` with its supported CUA runtime | Chosen candidate; verify Windows 11 launch, desktop interaction, permissions, and action results |
 | Embeddings | `google/embeddinggemma-2` | Chosen for semantic text retrieval; follow the model card's query/document prompts and format |
@@ -182,9 +183,9 @@ The known rubric is: Working MVP 30%, AI/SaaS relevance 20%, UI/UX 15%, market p
 
 ### 7.1 Model selection protocol
 
-The STT choice must be made by benchmarking both candidates on identical audio from multiple team members. Measure command correctness, word error rate where a reference transcript is available, latency, CPU/GPU use, and peak memory. Include Indian English accents, application names, technical terms, and numbers such as “thirty percent.”
+faster-whisper Large-v3 is the selected MVP STT model. No model comparison or benchmark is planned. Acceptance is based on real transcription working on the target laptop and a spoken command reaching the same task pipeline as typed input. Runtime metadata may report language, model/device, and latency to help diagnose failures.
 
-Gemma 4 E2B is the planned local LLM candidate, but the exact repository/build and inference runtime must be verified during setup. If local tool calls are unreliable or latency is unacceptable, a cloud LLM may be tested as a fallback. Cloud fallback must be opt-in/configured, and the UI must indicate when prompt data leaves the machine.
+The local LLM provider and model are configured through Pi's `models.json` and VoicePilot's local-LLM environment settings. At bridge startup, VoicePilot checks that the configured local model is available from the local inference endpoint; otherwise it selects an available KiloCode model. If a local generation fails before any tool action starts, VoicePilot may retry once with KiloCode; it never replays a request after a tool action starts. The System Status panel displays the active provider/model and the reason for fallback. If neither provider has an available model, Pi is reported as unavailable rather than silently selecting another provider.
 
 ### 7.2 Laya performance assumption
 
@@ -244,7 +245,7 @@ Laya should be treated as a specialized local browser decision layer, not as a g
 Global Alt+M + microphone
         |
         v
-STT service (faster-whisper or ARK, selected by benchmark)
+STT service (selected faster-whisper Large-v3 model)
         |
         v
 React UI <---- WebSocket/HTTP ----> Node.js/TypeScript bridge
@@ -332,7 +333,7 @@ Priority labels: **M** = must-have for MVP; **S** = should-have if time allows; 
 **Acceptance:** 10 consecutive start/stop cycles succeed; stopping recording produces a transcript or a clear failure state; no orphan recording continues after app exit.
 
 ### FR-02 — Speech transcription (M)
-- Transcribe command-length speech in the selected benchmarked language/model configuration.
+- Transcribe command-length speech with the selected faster-whisper Large-v3 model.
 - Return transcript text, duration, and error state.
 - Keep the service boundary swappable so STT can be changed without modifying PC tools.
 - Support local STT in the selected initial setup; cloud STT may be an explicit alternate configuration only.
@@ -493,29 +494,13 @@ Each tool returns a typed result containing at least:
 
 ## 12. Voice, model, and retrieval requirements
 
-### 12.1 STT benchmark
+### 12.1 STT acceptance
 
-Create a small local benchmark set of approximately 20–30 commands, recorded by several team members under consistent conditions. Include:
-- App names (Chrome, Notepad, VS Code, Calculator).
-- Technical terms such as TinyViT and federated learning.
-- Numerics and percentages (30%, 50%, 100%).
-- Similar-sounding words and varied phrasing.
-- Quiet room recordings plus a small noisy-room sample.
+faster-whisper Large-v3 is the selected MVP model; no model comparison or benchmark is planned. On the target Windows laptop, confirm that a real microphone recording produces a usable transcript and that the transcript enters the same Pi task pipeline as typed input. The UI may show detected language, active model/device, and transcription latency for troubleshooting.
 
-For faster-whisper Large-v3 and ARK-ASR-0.6B, record: reference text, hypothesis text, command-intent correctness, end-of-recording-to-transcript latency, peak memory, CPU/GPU utilization, and failure rate. Keep an interface that allows switching models without changing the rest of the app.
+### 12.2 LLM provider routing
 
-### 12.2 LLM/tool-calling qualification
-
-Before integrating all UI features, test the Gemma 4 E2B candidate on at least these cases:
-- Exact one-step requests.
-- Compound requests with two or three actions.
-- Ambiguous requests that should trigger a question.
-- Unsupported requests that should be rejected.
-- Invalid/missing tool arguments.
-- Malicious instructions contained in file text or a web page.
-- Tool error followed by a truthful user-facing explanation.
-
-If the candidate cannot reliably use the required tools in the selected Pi runtime, test a compatible cloud model as a configured fallback. Do not let fallback silently transmit data; show provider state and document the privacy implications.
+On the target Windows laptop, confirm VoicePilot selects the configured local model when its inference endpoint is available, selects KiloCode when the local model is missing or its endpoint is unavailable, and reports the active provider/model and fallback reason. If neither provider can supply a model, Pi must report unavailable instead of silently selecting a different provider.
 
 ### 12.3 EmbeddingGemma 2 retrieval
 
@@ -618,7 +603,6 @@ These are project acceptance targets to measure on the actual Windows laptop, no
 | Metric | Initial target | How to measure |
 |---|---|---|
 | Global hotkey responsiveness | UI state changes within 250 ms in normal conditions | 20 start/stop cycles with timestamped events |
-| Short-utterance STT latency | p50 ≤ 3 s and p95 ≤ 6 s after recording stops, if hardware permits | Same 20–30 sample benchmark |
 | Simple voice-to-action latency | p50 ≤ 5 s from end of speech to verified result | Volume/open-app test set |
 | Compound command reliability | ≥ 85% complete success across 20 scripted compound commands in the demo environment | Repeated integration run, count partial failures separately |
 | Simple command success | ≥ 90% correct action on the curated command set | Test transcript + action outcome, not WER alone |
@@ -673,7 +657,7 @@ If a model misses the latency target, first test supported GPU acceleration, qua
 
 | Team member | Ownership | Deliverables |
 |---|---|---|
-| Member 1 — Voice | Global hotkey, audio capture, STT comparison, transcript payload | Working Alt+M loop and model benchmark table |
+| Member 1 — Voice | Global hotkey, audio capture, selected Whisper transcript payload | Working Alt+M loop and a real transcript flowing into the task pipeline |
 | Member 2 — Agent/integration | Node bridge, Pi RPC, Gemma runtime, Laya MCP adapter | Typed command flow and visible tool events |
 | Member 3 — Windows/tools | Pi computer-use extension, application control, scroll, volume, safety policies | Working Windows action tools and verification evidence |
 | Member 4 — UX/retrieval/QA | React UI, confirmation/history components, EmbeddingGemma index, test/demo coordination | Polished web UI, file search UI, acceptance checklist |
@@ -692,7 +676,7 @@ All team members should use agreed interface contracts from hour one. Work can p
 | 13–16 hours | Polish and regression | Acceptance checklist, UI polish, model performance measured |
 | 16–18 hours | Freeze and rehearse | Reproducible startup, demo script rehearsed twice, backup path ready |
 
-For a 12-hour deadline, deprioritize Piper and semantic indexing until the P0 end-to-end loop is stable. For a 24-hour window, use the additional time to benchmark STT, improve semantic retrieval, test failure cases, and rehearse—not to expand the action scope indiscriminately.
+For a 12-hour deadline, deprioritize Piper and semantic indexing until the P0 end-to-end loop is stable. For a 24-hour window, use the additional time to improve semantic retrieval, test failure cases, and rehearse—not to expand the action scope indiscriminately.
 
 ## 18. Risks and mitigations
 
@@ -700,7 +684,7 @@ For a 12-hour deadline, deprioritize Piper and semantic indexing until the P0 en
 |---|---|---|
 | CUA/runtime integration fails on target Windows | High | Day-one spike: open Notepad and inspect a window before building the whole UI |
 | Pi RPC and custom MCP extension integration is unclear | High | Test one tool from Pi through the adapter early; do not assume MCP servers are automatically available in every Pi mode |
-| Gemma local tool calls unreliable or slow | High | Create a small qualification set; support a configured cloud fallback only if allowed and disclosed |
+| Local LLM unavailable | High | Check the configured local inference endpoint at startup and select KiloCode when local inference is unavailable; surface the active provider and fallback reason |
 | STT misrecognizes accent, app names, or numerics | High | Compare both STT candidates on team recordings; optimize for action accuracy |
 | Laya does not meet speed expectations | Medium | Benchmark on real sites and the actual GPU/CPU; use deterministic browser paths for simple actions where appropriate |
 | Browser UI and agent browser interfere | Medium | Use a separate controlled browser context for Laya |
@@ -777,7 +761,7 @@ Describe target users, explain what is genuinely implemented, and name future wo
 The MVP is done when all of the following are true:
 
 1. A user can press Alt+M to record a command and press Alt+M again to stop, including when another application is foregrounded.
-2. The chosen STT model produces usable transcripts on the team's command set and has benchmark results recorded.
+2. The selected faster-whisper Large-v3 model produces a usable transcript from real microphone audio and that transcript reaches the task pipeline.
 3. Pi is connected through RPC and can invoke the selected browser and desktop tools.
 4. Open app, safe close, scroll, volume, mute, web search, and browser navigation work on Windows 11.
 5. The React UI shows transcript, listening/thinking/execution states, approvals, and results.

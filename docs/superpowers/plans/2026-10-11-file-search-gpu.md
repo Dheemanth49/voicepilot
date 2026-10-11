@@ -103,13 +103,13 @@ Expected: all existing extraction/index/worker tests and new runtime protocol te
 - Modify: `README.md`
 
 **Interfaces:**
-- Keep `npm run setup:file-search` as the CPU baseline.
-- Add `npm run setup:file-search:gpu` invoking the same script with `-Gpu`.
+- Make `npm run setup:file-search` auto-select the GPU runtime when `nvidia-smi` is available and otherwise use CPU.
+- Keep explicit `npm run setup:file-search:gpu` (`-Gpu`) and `npm run setup:file-search:cpu` (`-Cpu`) commands for users who want to force a runtime.
 - GPU environment path: `.voicepilot-file-search\venv-gpu`; after validation set `VOICEPILOT_FILE_SEARCH_PYTHON` to that environment’s `Scripts\python.exe` and `VOICEPILOT_FILE_SEARCH_DEVICE=auto` in the project `.env`.
 
 - [x] **Step 1: Add a PowerShell test harness for driver selection, environment-key preservation, and old-driver rejection before CPU configuration changes**
 
-Extend an existing installer test or add `scripts/install-file-search.test.mjs` using a temporary repository fixture and mocked process invocations. Assert default setup selects CPU requirements; `-Gpu` selects GPU requirements and the separate venv; failed dependency install or model smoke check does not write the GPU Python path into `.env`.
+The existing installer tests cover CUDA driver selection, GPU setup's old-driver rejection, and environment-key preservation. Follow-up automated coverage for default GPU detection and the explicit `-Cpu` path remains pending.
 
 - [x] **Step 2: Run the installer tests and confirm the new cases fail**
 
@@ -123,11 +123,17 @@ Pin PyTorch/torchvision to `2.14.1/0.29.1` and verify the Windows/Python 3.12 wh
 - [x] **Step 4: Add a CPU-only and rerun installer verification**
 
 Run: `node --test scripts/install-file-search.test.mjs`  
-Expected: CPU setup remains unchanged; repeated GPU setup reuses/reconciles the GPU venv; failed GPU provisioning leaves CPU setup selectable.
+Expected: explicit CPU setup remains available; repeated GPU setup reuses/reconciles the GPU venv; failed GPU provisioning leaves CPU setup selectable.
 
 - [x] **Step 5: Document CPU and GPU installation plus diagnostics output**
 
 In README, document the CPU command, GPU command, requirement for a user-installed compatible NVIDIA driver, expected first model download, `.env` device preference, and CPU fallback. Do not tell users to edit the global PATH or install a driver through VoicePilot.
+
+### Follow-up: Automatic runtime selection
+
+- [x] Make the generic file-search setup choose the GPU environment when `nvidia-smi` is present.
+- [x] Add `npm run setup:file-search:cpu` so CPU selection stays explicit and available.
+- [ ] Add mocked installer coverage for automatic GPU selection and forced CPU selection.
 
 ### Task 4: Surface file-search device status in bridge health and setup UI
 

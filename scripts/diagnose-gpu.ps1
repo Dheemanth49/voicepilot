@@ -46,11 +46,44 @@ Invoke-PythonInfo "File-search PyTorch" $fileSearchPython 'import torch; print("
 
 $speechPython = Get-Setting "VOICEPILOT_PYTHON" (Join-Path $repoRoot ".venv\Scripts\python.exe")
 $runtime = Get-Setting "VOICEPILOT_STT_CUDA_RUNTIME"
+$previousSpeechModel = $env:VOICEPILOT_STT_MODEL
+$previousCudaRuntime = $env:VOICEPILOT_STT_CUDA_RUNTIME
+$previousHfHome = $env:HF_HOME
+$previousHfHubCache = $env:HF_HUB_CACHE
+$env:VOICEPILOT_STT_MODEL = Get-Setting "VOICEPILOT_STT_MODEL" "large-v3"
 if ($runtime) { $previousCudaRuntime = $env:VOICEPILOT_STT_CUDA_RUNTIME; $env:VOICEPILOT_STT_CUDA_RUNTIME = $runtime }
+$speechProbe = @'
+import os
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+
+for package in ("faster-whisper", "ctranslate2", "av"):
+    try:
+        print(package + ":", version(package))
+    except PackageNotFoundError:
+        print(package + ": not installed")
+
+model = os.environ.get("VOICEPILOT_STT_MODEL", "large-v3")
+repo = model if "/" in model else "Systran/faster-whisper-" + model
+cache_root = Path(os.environ.get("HF_HUB_CACHE") or (Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"))
+cache_path = cache_root / ("models--" + repo.replace("/", "--"))
+print("Configured speech model:", model)
+print("Model cache:", "present" if cache_path.is_dir() else "not present (first use downloads it)")
+
+if os.name == "nt":
+    handles = [os.add_dll_directory(path) for path in os.environ.get("VOICEPILOT_STT_CUDA_RUNTIME", "").split(os.pathsep) if os.path.isdir(path)]
+import ctranslate2
+print("CTranslate2 CUDA compute types:", sorted(ctranslate2.get_supported_compute_types("cuda")))
+'@
 try {
-  Invoke-PythonInfo "Speech CTranslate2" $speechPython 'import os; handles = [os.add_dll_directory(p) for p in os.environ.get("VOICEPILOT_STT_CUDA_RUNTIME", "").split(os.pathsep) if os.name == "nt" and os.path.isdir(p)]; import ctranslate2; print("CTranslate2:", ctranslate2.__version__); print("CUDA compute types:", sorted(ctranslate2.get_supported_compute_types("cuda")))'
+  if ($settings.ContainsKey("HF_HOME")) { $env:HF_HOME = $settings["HF_HOME"] }
+  if ($settings.ContainsKey("HF_HUB_CACHE")) { $env:HF_HUB_CACHE = $settings["HF_HUB_CACHE"] }
+  Invoke-PythonInfo "Speech model/runtime" $speechPython $speechProbe
 } finally {
-  if ($runtime) { if ($null -eq $previousCudaRuntime) { Remove-Item Env:VOICEPILOT_STT_CUDA_RUNTIME -ErrorAction SilentlyContinue } else { $env:VOICEPILOT_STT_CUDA_RUNTIME = $previousCudaRuntime } }
+  if ($null -eq $previousSpeechModel) { Remove-Item Env:VOICEPILOT_STT_MODEL -ErrorAction SilentlyContinue } else { $env:VOICEPILOT_STT_MODEL = $previousSpeechModel }
+  if ($null -eq $previousCudaRuntime) { Remove-Item Env:VOICEPILOT_STT_CUDA_RUNTIME -ErrorAction SilentlyContinue } else { $env:VOICEPILOT_STT_CUDA_RUNTIME = $previousCudaRuntime }
+  if ($null -eq $previousHfHome) { Remove-Item Env:HF_HOME -ErrorAction SilentlyContinue } else { $env:HF_HOME = $previousHfHome }
+  if ($null -eq $previousHfHubCache) { Remove-Item Env:HF_HUB_CACHE -ErrorAction SilentlyContinue } else { $env:HF_HUB_CACHE = $previousHfHubCache }
 }
 Write-Host "  Requested speech device: $(Get-Setting 'VOICEPILOT_STT_DEVICE' 'auto')"
 Write-Host "  CUDA DLL runtime: $(if ($runtime) { $runtime } else { 'not configured' })"

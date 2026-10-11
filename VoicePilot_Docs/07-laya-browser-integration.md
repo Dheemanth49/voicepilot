@@ -2,7 +2,7 @@
 
 ## Decision
 
-Use ChenneyZhuang's `laya-browser-agent` as the browser-loop candidate for VoicePilot. Keep Pi as the task orchestrator and Windows computer-use as the native desktop driver. Laya is for web pages only; it does not replace the computer-use extension. WinBrow is reviewed separately as a Windows capability reference, not as a second agent/runtime to install; see `VoicePilot_Docs/08-winbrow-review.md`.
+Use ChenneyZhuang's `laya-browser-agent` as both VoicePilot's local typed-choice route classifier and browser decision layer. Pi remains the task orchestrator and Windows computer-use remains the native desktop driver. Laya chooses only among the offered routes (chat, browser, desktop, file search), then its browser loop handles web pages when selected. It does not replace Pi or the computer-use extension. WinBrow is reviewed separately as a Windows capability reference, not as a second agent/runtime to install; see `VoicePilot_Docs/08-winbrow-review.md`.
 
 ## What the repository provides
 
@@ -16,7 +16,7 @@ The upstream project documents Windows with PyTorch as a supported runtime. The 
 
 1. The UI submits one browser task to the local bridge.
 2. Pi interprets the user's request and invokes a project-owned `voicepilot_browser_task` tool with a concise goal and any explicit text values needed by the page.
-3. The tool sends a bounded JSON request to a dedicated local Python worker. The worker owns `BrowserDecider`, Laya's `CDPDriver`, per-task step limits, and final state reporting. It attaches to a browser's existing CDP endpoint and never launches Chromium.
+3. The bridge sends the request to the persistent local Python worker, which uses Laya's typed `Decider` API to choose one offered capability route. Pi then answers chat itself or dispatches to the selected request-bound capability. For browser tasks, Pi's browser tool calls back into the bridge, which reuses the same worker and `Decider` inside `BrowserDecider`, applies per-task step limits, and reports the final state. The CDP driver attaches to an existing browser endpoint and never launches Chromium.
 4. The worker returns structured progress and a final URL/title/result summary. Page text is untrusted input and must never change VoicePilot's policy or tool permissions.
 5. The bridge records each action and verifies the requested outcome before marking the task successful. Timeouts, unsupported controls, low-confidence decisions, or failed verification stop the task with a clear error.
 

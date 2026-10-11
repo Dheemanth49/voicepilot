@@ -36,7 +36,7 @@ try {
   $bridgeDependenciesPresent = Test-Path -LiteralPath (Join-Path $repoRoot "node_modules\.bin\tsx.cmd")
   if (-not ($uiDependenciesPresent -and $bridgeDependenciesPresent)) {
     Write-Host "Installing VoicePilot dependencies from the root lockfile..."
-    & npm ci
+    & npm.cmd ci
     if ($LASTEXITCODE -ne 0) {
       throw "VoicePilot dependency installation failed."
     }
@@ -54,7 +54,7 @@ try {
   $kiloCodeExtension = Join-Path $piRoot "node_modules\pi-kilocode\src\index.ts"
   if (-not ((Test-Path -LiteralPath $piCommand) -and (Test-Path -LiteralPath $computerUseExtension) -and (Test-Path -LiteralPath $kiloCodeExtension))) {
     Write-Host "Installing the pinned Pi CLI, computer-use extension, and KiloCode provider from the project lockfile..."
-    & npm ci --prefix $piRoot --ignore-scripts --no-audit --no-fund
+    & npm.cmd ci --prefix $piRoot --ignore-scripts --no-audit --no-fund
     if ($LASTEXITCODE -ne 0) {
       throw "Pi/computer-use/KiloCode installation failed. Check internet access to registry.npmjs.org and run npm run setup:pi again."
     }

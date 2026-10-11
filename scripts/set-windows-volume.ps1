@@ -1,7 +1,9 @@
 param(
-  [Parameter(Mandatory = $true)]
+  [Parameter(Mandatory = $true, ParameterSetName = "Level")]
   [ValidateRange(0, 100)]
-  [int]$Level
+  [int]$Level,
+  [Parameter(Mandatory = $true, ParameterSetName = "Mute")]
+  [bool]$Mute
 )
 
 $ErrorActionPreference = "Stop"
@@ -82,14 +84,32 @@ namespace VoicePilot.WindowsAudio {
                 if (Marshal.IsComObject(volume)) Marshal.ReleaseComObject(volume);
             }
         }
+
+        public static bool SetMuteAndRead(bool muted) {
+            var volume = GetEndpointVolume();
+            try {
+                var eventContext = Guid.Empty;
+                volume.SetMute(muted, ref eventContext);
+                bool actual;
+                volume.GetMute(out actual);
+                return actual;
+            } finally {
+                if (Marshal.IsComObject(volume)) Marshal.ReleaseComObject(volume);
+            }
+        }
     }
 }
 '@
 
 try {
   Add-Type -TypeDefinition $coreAudio -Language CSharp -ErrorAction Stop
-  $actualLevel = [VoicePilot.WindowsAudio.MasterVolume]::SetAndRead($Level)
-  @{ level = $actualLevel } | ConvertTo-Json -Compress
+  if ($PSCmdlet.ParameterSetName -eq "Mute") {
+    $actualMute = [VoicePilot.WindowsAudio.MasterVolume]::SetMuteAndRead($Mute)
+    @{ muted = $actualMute } | ConvertTo-Json -Compress
+  } else {
+    $actualLevel = [VoicePilot.WindowsAudio.MasterVolume]::SetAndRead($Level)
+    @{ level = $actualLevel } | ConvertTo-Json -Compress
+  }
 } catch {
   [Console]::Error.WriteLine("Windows master volume could not be set: $($_.Exception.Message)")
   exit 1

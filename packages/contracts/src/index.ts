@@ -28,10 +28,11 @@ export interface HealthResponse {
     hotkey: ProviderStatus;
     fileSearch: ProviderStatus;
     tts: ProviderStatus;
+    layaRouter: ProviderStatus;
     browserTools: ProviderStatus;
     desktopTools: ProviderStatus;
   };
-  providers?: { sttModel?: string; fileSearchModel?: string; sttRuntime?: SttRuntimeStatus; fileSearchRuntime?: FileSearchRuntimeStatus };
+  providers?: { sttModel?: string; fileSearchModel?: string; llmProvider?: string; llmModel?: string; llmFallbackReason?: string | null; sttRuntime?: SttRuntimeStatus; fileSearchRuntime?: FileSearchRuntimeStatus };
   timestamp: string;
 }
 
@@ -56,11 +57,21 @@ export interface TaskRequest {
 
 export interface TaskResponse {
   taskId: string;
-  status: "executing" | "succeeded" | "failed" | "cancelled";
+  status: "executing" | "succeeded" | "partially_succeeded" | "failed" | "cancelled";
+  mode?: "chat" | "browser" | "desktop" | "file_search";
   transcript: string;
+  actionSteps?: TaskActionStep[];
   result?: string;
   error?: string;
   createdAt: string;
+  completedAt?: string;
+}
+
+export interface TaskActionStep {
+  id: string;
+  label: string;
+  status: "running" | "completed" | "failed";
+  startedAt: string;
   completedAt?: string;
 }
 
@@ -81,7 +92,7 @@ export interface ApprovalRecord {
   consumedAt?: string;
 }
 
-export type TaskEventType = "task.created" | "task.status" | "task.finished" | "approval.required" | "approval.resolved";
+export type TaskEventType = "task.created" | "task.status" | "task.action" | "task.finished" | "approval.required" | "approval.resolved";
 
 export interface TaskEvent {
   eventId: string;
